@@ -1,72 +1,53 @@
-from flask import Flask, jsonify, request
-import requests
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS to allow API access from different domains
 
-def fetch_defillama_yields(platform=None, chain=None, stablecoin=None, limit=20):
-    """
-    Fetch stablecoin yield data from DeFiLlama API and apply optional filters.
-    
-    Parameters:
-        platform (str): Filter by lending platform (e.g., Aave, Compound).
-        chain (str): Filter by blockchain (e.g., Ethereum, BSC).
-        stablecoin (str): Filter by stablecoin symbol (e.g., USDT, USDC, DAI).
-        limit (int): Limit the number of results to return.
+# Sample data (Replace with actual database/API integration)
+stablecoin_yields = [
+    {"platform": "Aave", "symbol": "USDC", "chain": "Ethereum", "apy": 4.2, "tvl": 500000000},
+    {"platform": "Compound", "symbol": "DAI", "chain": "Ethereum", "apy": 3.8, "tvl": 300000000},
+    {"platform": "Aave", "symbol": "DAI", "chain": "Ethereum", "apy": 4.5, "tvl": 250000000},
+    {"platform": "Compound", "symbol": "USDT", "chain": "Ethereum", "apy": 3.9, "tvl": 200000000},
+    {"platform": "Aave", "symbol": "USDT", "chain": "Ethereum", "apy": 4.1, "tvl": 220000000},
+    {"platform": "Yearn", "symbol": "USDC", "chain": "Ethereum", "apy": 5.0, "tvl": 150000000},
+    {"platform": "Yearn", "symbol": "DAI", "chain": "Ethereum", "apy": 4.8, "tvl": 120000000},
+    {"platform": "Yearn", "symbol": "USDT", "chain": "Ethereum", "apy": 4.7, "tvl": 100000000},
+    {"platform": "Curve", "symbol": "USDC", "chain": "Ethereum", "apy": 3.5, "tvl": 700000000},
+    {"platform": "Curve", "symbol": "DAI", "chain": "Ethereum", "apy": 3.6, "tvl": 650000000},
+    {"platform": "Curve", "symbol": "USDT", "chain": "Ethereum", "apy": 3.4, "tvl": 600000000},
+]  # Example data, replace this with an actual API or database query
 
-    Returns:
-        list: Sorted list of stablecoin yield opportunities.
-    """
-    url = "https://yields.llama.fi/pools"
-    response = requests.get(url)
-    
-    if response.status_code != 200:
-        return []
 
-    data = response.json()
-    
-    # Filter only stablecoin yields
-    filtered_pools = []
-    for pool in data.get('data', []):
-        if pool.get('stablecoin', False):  # Only include stablecoin pools
-            if platform and platform.lower() not in pool.get('project', '').lower():
-                continue
-            if chain and chain.lower() not in pool.get('chain', '').lower():
-                continue
-            if stablecoin and stablecoin.lower() not in pool.get('symbol', '').lower():
-                continue
-
-            filtered_pools.append({
-                "platform": pool.get('project', 'Unknown'),
-                "symbol": pool.get('symbol', 'N/A'),
-                "chain": pool.get('chain', 'Unknown'),
-                "apy": round(pool.get('apy', 2), 2),
-                "tvl": round(pool.get('tvlUsd', 2), 2)
-            })
-
-    # Sort by highest APY and apply result limit
-    return sorted(filtered_pools, key=lambda x: x["apy"], reverse=True)[:limit]
-
-@app.route('/yields', methods=['GET'])
+@app.route("/yields", methods=["GET"])
 def get_yields():
-    """
-    API endpoint to retrieve stablecoin yield data with optional filtering.
+    """Fetch stablecoin yields with optional filtering and limit."""
+    
+    # Get query parameters
+    platform = request.args.get("platform")  # Filter by platform (Aave, Compound, etc.)
+    chain = request.args.get("chain")  # Filter by blockchain (Ethereum, BSC, etc.)
+    stablecoin = request.args.get("stablecoin")  # Filter by stablecoin symbol (USDC, DAI, etc.)
+    
+    # Default limit is 10, but can be adjusted via query parameter
+    try:
+        limit = int(request.args.get("limit", 10))  # Convert to integer
+        if limit < 1 or limit > 100:  # Restrict limits to reasonable range
+            limit = 10
+    except ValueError:
+        limit = 10  # Fallback to default if invalid value
 
-    Query Parameters:
-        platform (str): Filter results by platform (e.g., Aave, Compound).
-        chain (str): Filter results by blockchain (e.g., Ethereum, BSC).
-        stablecoin (str): Filter results by stablecoin symbol (e.g., USDT, USDC, DAI).
-        limit (int): Limit the number of results (default is 20).
+    # Apply filters if provided
+    filtered_yields = [
+        y for y in stablecoin_yields
+        if (not platform or y["platform"].lower() == platform.lower()) and
+           (not chain or y["chain"].lower() == chain.lower()) and
+           (not stablecoin or y["symbol"].lower() == stablecoin.lower())
+    ]
 
-    Returns:
-        JSON response with filtered stablecoin yield data.
-    """
-    platform = request.args.get('platform')
-    chain = request.args.get('chain')
-    stablecoin = request.args.get('stablecoin')
-    limit = int(request.args.get('limit', 20))  # Default limit to 20
+    # Limit results
+    return jsonify(filtered_yields[:limit])
 
-    yields = fetch_defillama_yields(platform, chain, stablecoin, limit)
-    return jsonify(yields)
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000, debug=True)
