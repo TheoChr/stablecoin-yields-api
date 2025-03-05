@@ -1,19 +1,23 @@
 from flask import Flask, jsonify
+from flask_cors import CORS  # Import CORS to allow cross-origin requests
 import requests
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
-# Fetch stablecoin yields from DeFi Llama
 def fetch_defillama_yields():
     url = "https://yields.llama.fi/pools"
-    response = requests.get(url)
-    if response.status_code != 200:
-        return []
-    
+    try:
+        response = requests.get(url, timeout=10)  # Set timeout to avoid hanging requests
+        response.raise_for_status()  # Raise an error for bad responses (4xx, 5xx)
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching data: {e}")
+        return {"error": "Failed to fetch yield data from DeFiLlama"}
+
     data = response.json()
-    filtered_pools = []
 
     # Filter only stablecoins and relevant fields
+    filtered_pools = []
     for pool in data.get('data', []):
         if pool.get('stablecoin', False):  # Check if it's a stablecoin
             filtered_pools.append({
@@ -26,17 +30,17 @@ def fetch_defillama_yields():
     
     return sorted(filtered_pools, key=lambda x: x["apy"], reverse=True)  # Sort by highest APY
 
-# Root endpoint to confirm API is working
 @app.route('/')
 def home():
-    return "✅ Stablecoin Yields API is live! Visit /yields to get data."
+    return '''
+    <h2>✅ Stablecoin Yields API is live!</h2>
+    <p>Visit <a href="/yields">/yields</a> to get data.</p>
+    '''
 
-# Endpoint to fetch stablecoin yields
 @app.route('/yields', methods=['GET'])
 def get_yields():
     yields = fetch_defillama_yields()
     return jsonify(yields)
 
 if __name__ == '__main__':
-    from waitress import serve  # Use waitress instead of app.run()
-    serve(app, host="0.0.0.0", port=5000)
+    app.run(host='0.0.0.0', port=5000)
