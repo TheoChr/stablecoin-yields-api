@@ -1,45 +1,44 @@
-from flask import Flask, jsonify
-from flask_cors import CORS  # Import CORS to allow cross-origin requests
+from flask import Flask, jsonify, request
 import requests
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
 
-def fetch_defillama_yields():
+def fetch_defillama_yields(platform=None, chain=None, stablecoin=None):
     url = "https://yields.llama.fi/pools"
-    try:
-        response = requests.get(url, timeout=10)  # Set timeout to avoid hanging requests
-        response.raise_for_status()  # Raise an error for bad responses (4xx, 5xx)
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching data: {e}")
-        return {"error": "Failed to fetch yield data from DeFiLlama"}
+    response = requests.get(url)
+    if response.status_code != 200:
+        return []
 
     data = response.json()
 
-    # Filter only stablecoins and relevant fields
+    # Apply filters if specified
     filtered_pools = []
     for pool in data.get('data', []):
-        if pool.get('stablecoin', False):  # Check if it's a stablecoin
-            filtered_pools.append({
-                "platform": pool.get('project', 'Unknown'),  # Lending platform
-                "symbol": pool.get('symbol', 'N/A'),  # Stablecoin symbol (USDT, USDC, DAI)
-                "chain": pool.get('chain', 'Unknown'),  # Blockchain (Ethereum, BSC, etc.)
-                "apy": round(pool.get('apy', 0), 2),  # Annual Percentage Yield (APY)
-                "tvl": round(pool.get('tvlUsd', 0), 2)  # Total Value Locked (TVL in USD)
-            })
-    
-    return sorted(filtered_pools, key=lambda x: x["apy"], reverse=True)  # Sort by highest APY
+        if pool.get('stablecoin', False):  # Only stablecoin pools
+            if platform and platform.lower() not in pool.get('project', '').lower():
+                continue
+            if chain and chain.lower() not in pool.get('chain', '').lower():
+                continue
+            if stablecoin and stablecoin.lower() not in pool.get('symbol', '').lower():
+                continue
 
-@app.route('/')
-def home():
-    return '''
-    <h2>✅ Stablecoin Yields API is live!</h2>
-    <p>Visit <a href="/yields">/yields</a> to get data.</p>
-    '''
+            filtered_pools.append({
+                "platform": pool.get('project', 'Unknown'),
+                "symbol": pool.get('symbol', 'N/A'),
+                "chain": pool.get('chain', 'Unknown'),
+                "apy": round(pool.get('apy', 0), 2),
+                "tvl": round(pool.get('tvlUsd', 0), 2)
+            })
+
+    return sorted(filtered_pools, key=lambda x: x["apy"], reverse=True)
 
 @app.route('/yields', methods=['GET'])
 def get_yields():
-    yields = fetch_defillama_yields()
+    platform = request.args.get('platform')
+    chain = request.args.get('chain')
+    stablecoin = request.args.get('stablecoin')
+
+    yields = fetch_defillama_yields(platform, chain, stablecoin)
     return jsonify(yields)
 
 if __name__ == '__main__':
