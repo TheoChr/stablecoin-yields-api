@@ -1,4 +1,3 @@
-Flask
+flask
+flask-cors
 requests
-gunicorn
-waitress
