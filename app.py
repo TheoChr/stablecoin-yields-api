@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
+import os
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for cross-origin requests
@@ -8,7 +9,24 @@ CORS(app)  # Enable CORS for cross-origin requests
 # ✅ Homepage route to prevent 404 errors
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"message": "Stablecoin Yields API is running!", "endpoints": ["/yields", "/stablecoin-prices"]})
+    return jsonify({
+        "message": "Stablecoin Yields API is running!",
+        "endpoints": ["/yields", "/stablecoin-prices", "/tvl", "/risk-analysis"]
+    })
+
+# ✅ Fetch TVL Data from DeFiLlama
+def fetch_tvl_data():
+    url = "https://api.llama.fi/tvl"
+    try:
+        response = requests.get(url)
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.route("/tvl", methods=["GET"])
+def get_tvl():
+    """Fetch Total Value Locked (TVL) data from DeFiLlama."""
+    return jsonify(fetch_tvl_data())
 
 # ✅ Fetch live data from DeFi APIs
 def fetch_aave_data():
@@ -125,7 +143,26 @@ def get_stablecoin_prices():
     """Fetch live stablecoin prices from CoinGecko."""
     return jsonify(fetch_coingecko_data())
 
+# ✅ Risk Analysis Endpoint
+def calculate_risk(platform, tvl, audits, yield_stability, decentralization):
+    """Calculate risk score (1-10) based on TVL, audits, yield stability & decentralization."""
+    score = 0
+    if audits: score += 3
+    if tvl > 500_000_000: score += 3  # More TVL = safer
+    if yield_stability: score += 2
+    if decentralization: score += 2
+    return min(10, score)  # Max score = 10 (lowest risk)
+
+@app.route("/risk-analysis", methods=["GET"])
+def get_risk_scores():
+    """Return risk scores for different DeFi platforms."""
+    risk_data = [
+        {"platform": "Aave", "risk_score": calculate_risk("Aave", 600_000_000, True, True, True)},
+        {"platform": "Compound", "risk_score": calculate_risk("Compound", 450_000_000, True, True, False)},
+        {"platform": "Curve", "risk_score": calculate_risk("Curve", 700_000_000, True, False, True)}
+    ]
+    return jsonify(risk_data)
+
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
