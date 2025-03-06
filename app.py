@@ -1,53 +1,124 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import requests
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS to allow API access from different domains
+CORS(app)  # Enable CORS for cross-origin requests
 
-# Sample data (Replace with actual database/API integration)
-stablecoin_yields = [
-    {"platform": "Aave", "symbol": "USDC", "chain": "Ethereum", "apy": 4.2, "tvl": 500000000},
-    {"platform": "Compound", "symbol": "DAI", "chain": "Ethereum", "apy": 3.8, "tvl": 300000000},
-    {"platform": "Aave", "symbol": "DAI", "chain": "Ethereum", "apy": 4.5, "tvl": 250000000},
-    {"platform": "Compound", "symbol": "USDT", "chain": "Ethereum", "apy": 3.9, "tvl": 200000000},
-    {"platform": "Aave", "symbol": "USDT", "chain": "Ethereum", "apy": 4.1, "tvl": 220000000},
-    {"platform": "Yearn", "symbol": "USDC", "chain": "Ethereum", "apy": 5.0, "tvl": 150000000},
-    {"platform": "Yearn", "symbol": "DAI", "chain": "Ethereum", "apy": 4.8, "tvl": 120000000},
-    {"platform": "Yearn", "symbol": "USDT", "chain": "Ethereum", "apy": 4.7, "tvl": 100000000},
-    {"platform": "Curve", "symbol": "USDC", "chain": "Ethereum", "apy": 3.5, "tvl": 700000000},
-    {"platform": "Curve", "symbol": "DAI", "chain": "Ethereum", "apy": 3.6, "tvl": 650000000},
-    {"platform": "Curve", "symbol": "USDT", "chain": "Ethereum", "apy": 3.4, "tvl": 600000000},
-]  # Example data, replace this with an actual API or database query
+# ✅ Fetch live data from DeFi APIs
+def fetch_aave_data():
+    url = "https://api.thegraph.com/subgraphs/name/aave/protocol-v3"
+    query = {
+        "query": """
+        {
+          reserves(where: {symbol_in: ["USDC", "DAI", "USDT"]}) {
+            symbol
+            liquidityRate
+            variableBorrowRate
+            stableBorrowRate
+            availableLiquidity
+          }
+        }
+        """
+    }
+    try:
+        response = requests.post(url, json=query)
+        data = response.json()
+        markets = []
+        for reserve in data["data"]["reserves"]:
+            markets.append({
+                "platform": "Aave",
+                "symbol": reserve["symbol"],
+                "chain": "Ethereum",
+                "apy": float(reserve["liquidityRate"]) / 1e27 * 100,  # Convert to %
+                "tvl": float(reserve["availableLiquidity"]) / 1e18  # Convert to USD
+            })
+        return markets
+    except Exception as e:
+        return [{"error": str(e)}]
 
+def fetch_compound_data():
+    url = "https://api.compound.finance/api/v2/ctoken"
+    try:
+        response = requests.get(url)
+        data = response.json()
+        markets = []
+        for ctoken in data["cToken"]:
+            if ctoken["symbol"] in ["cUSDC", "cDAI", "cUSDT"]:
+                markets.append({
+                    "platform": "Compound",
+                    "symbol": ctoken["underlying_symbol"],
+                    "chain": "Ethereum",
+                    "apy": float(ctoken["supply_rate"]["value"]) * 100,
+                    "tvl": float(ctoken["total_supply"]) * float(ctoken["exchange_rate"]["value"]) / 1e18
+                })
+        return markets
+    except Exception as e:
+        return [{"error": str(e)}]
 
+def fetch_curve_data():
+    url = "https://api.curve.fi/api/getPools/ethereum/main"
+    try:
+        response = requests.get(url)
+        data = response.json()
+        markets = []
+        for pool in data["data"]["poolData"]:
+            if any(token in pool["coins"] for token in ["USDC", "DAI", "USDT"]):
+                markets.append({
+                    "platform": "Curve",
+                    "symbol": pool["coins"][0],  # Example: First stablecoin in the pool
+                    "chain": "Ethereum",
+                    "apy": float(pool["gaugeApr"] or 0),  # APR from Curve gauge
+                    "tvl": float(pool["usdTotal"])
+                })
+        return markets
+    except Exception as e:
+        return [{"error": str(e)}]
+
+def fetch_coingecko_data():
+    url = "https://api.coingecko.com/api/v3/simple/price"
+    params = {"ids": "usd-coin,dai,tether", "vs_currencies": "usd"}
+    try:
+        response = requests.get(url, params=params)
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
+
+# ✅ New endpoint to fetch live yields
 @app.route("/yields", methods=["GET"])
 def get_yields():
-    """Fetch stablecoin yields with optional filtering and limit."""
-    
+    """Fetch real-time stablecoin yields with optional filtering and limit."""
+
     # Get query parameters
-    platform = request.args.get("platform")  # Filter by platform (Aave, Compound, etc.)
-    chain = request.args.get("chain")  # Filter by blockchain (Ethereum, BSC, etc.)
-    stablecoin = request.args.get("stablecoin")  # Filter by stablecoin symbol (USDC, DAI, etc.)
-    
-    # Default limit is 10, but can be adjusted via query parameter
+    platform = request.args.get("platform")
+    chain = request.args.get("chain")
+    stablecoin = request.args.get("stablecoin")
+
     try:
-        limit = int(request.args.get("limit", 10))  # Convert to integer
-        if limit < 1 or limit > 100:  # Restrict limits to reasonable range
+        limit = int(request.args.get("limit", 10))
+        if limit < 1 or limit > 100:
             limit = 10
     except ValueError:
-        limit = 10  # Fallback to default if invalid value
+        limit = 10
 
-    # Apply filters if provided
+    # Fetch live data from all sources
+    all_yields = fetch_aave_data() + fetch_compound_data() + fetch_curve_data()
+
+    # Filter results
     filtered_yields = [
-        y for y in stablecoin_yields
+        y for y in all_yields
         if (not platform or y["platform"].lower() == platform.lower()) and
            (not chain or y["chain"].lower() == chain.lower()) and
            (not stablecoin or y["symbol"].lower() == stablecoin.lower())
     ]
 
-    # Limit results
     return jsonify(filtered_yields[:limit])
 
+# ✅ New endpoint to check stablecoin prices (for depeg detection)
+@app.route("/stablecoin-prices", methods=["GET"])
+def get_stablecoin_prices():
+    """Fetch live stablecoin prices from CoinGecko."""
+    return jsonify(fetch_coingecko_data())
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000, debug=True)
