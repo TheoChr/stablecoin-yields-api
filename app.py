@@ -67,6 +67,22 @@ def get_dia_price_feed():
     except Exception as e:
         return jsonify({"error": str(e)})
 
+# ✅ Fetch Yield Data from DeFiLlama
+@app.route("/yields", methods=["GET"])
+def get_yields():
+    """Fetch real-time stablecoin yields from DeFiLlama."""
+    url = "https://yields.llama.fi/pools"
+    try:
+        response = requests.get(url)
+        data = response.json()
+
+        # Filter only stablecoin pools
+        stablecoin_pools = [pool for pool in data["data"] if pool["chain"] == "Ethereum" and pool["symbol"] in ["USDC", "DAI", "USDT"]]
+
+        return jsonify(stablecoin_pools)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
 # ✅ Risk Analysis Endpoint
 @app.route("/risk-analysis", methods=["GET"])
 def get_risk_scores():
