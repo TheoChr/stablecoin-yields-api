@@ -5,6 +5,11 @@ import requests
 app = Flask(__name__)
 CORS(app)  # Enable CORS for cross-origin requests
 
+# ✅ Homepage route to prevent 404 errors
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"message": "Stablecoin Yields API is running!", "endpoints": ["/yields", "/stablecoin-prices"]})
+
 # ✅ Fetch live data from DeFi APIs
 def fetch_aave_data():
     url = "https://api.thegraph.com/subgraphs/name/aave/protocol-v3"
@@ -121,4 +126,6 @@ def get_stablecoin_prices():
     return jsonify(fetch_coingecko_data())
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000, debug=True)
+    import os
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, debug=True)
