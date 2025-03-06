@@ -37,8 +37,6 @@ def fetch_aave_data():
           reserves(where: {symbol_in: ["USDC", "DAI", "USDT"]}) {
             symbol
             liquidityRate
-            variableBorrowRate
-            stableBorrowRate
             availableLiquidity
           }
         }
@@ -47,6 +45,11 @@ def fetch_aave_data():
     try:
         response = requests.post(url, json=query)
         data = response.json()
+
+        # 🔹 Check if "data" exists in the response
+        if "data" not in data or "reserves" not in data["data"]:
+            return [{"error": "Invalid response from Aave API"}]
+
         markets = []
         for reserve in data["data"]["reserves"]:
             markets.append({
@@ -65,6 +68,11 @@ def fetch_compound_data():
     try:
         response = requests.get(url)
         data = response.json()
+
+        # 🔹 Ensure valid response
+        if "cToken" not in data:
+            return [{"error": "Invalid response from Compound API"}]
+
         markets = []
         for ctoken in data["cToken"]:
             if ctoken["symbol"] in ["cUSDC", "cDAI", "cUSDT"]:
@@ -84,6 +92,11 @@ def fetch_curve_data():
     try:
         response = requests.get(url)
         data = response.json()
+
+        # 🔹 Ensure valid response
+        if "data" not in data or "poolData" not in data["data"]:
+            return [{"error": "Invalid response from Curve API"}]
+
         markets = []
         for pool in data["data"]["poolData"]:
             if any(token in pool["coins"] for token in ["USDC", "DAI", "USDT"]):
@@ -112,22 +125,27 @@ def fetch_coingecko_data():
 def get_yields():
     """Fetch real-time stablecoin yields with optional filtering and limit."""
 
-    # Get query parameters
+    # Fetch live data from all sources
+    aave_data = fetch_aave_data()
+    compound_data = fetch_compound_data()
+    curve_data = fetch_curve_data()
+
+    # 🔹 Ensure all sources return valid data
+    if isinstance(aave_data, list) and "error" in aave_data[0]:
+        return jsonify({"error": "Aave API issue", "details": aave_data})
+    if isinstance(compound_data, list) and "error" in compound_data[0]:
+        return jsonify({"error": "Compound API issue", "details": compound_data})
+    if isinstance(curve_data, list) and "error" in curve_data[0]:
+        return jsonify({"error": "Curve API issue", "details": curve_data})
+
+    all_yields = aave_data + compound_data + curve_data
+
+    # Apply filtering
     platform = request.args.get("platform")
     chain = request.args.get("chain")
     stablecoin = request.args.get("stablecoin")
+    limit = int(request.args.get("limit", 10))
 
-    try:
-        limit = int(request.args.get("limit", 10))
-        if limit < 1 or limit > 100:
-            limit = 10
-    except ValueError:
-        limit = 10
-
-    # Fetch live data from all sources
-    all_yields = fetch_aave_data() + fetch_compound_data() + fetch_curve_data()
-
-    # Filter results
     filtered_yields = [
         y for y in all_yields
         if (not platform or y["platform"].lower() == platform.lower()) and
@@ -144,22 +162,13 @@ def get_stablecoin_prices():
     return jsonify(fetch_coingecko_data())
 
 # ✅ Risk Analysis Endpoint
-def calculate_risk(platform, tvl, audits, yield_stability, decentralization):
-    """Calculate risk score (1-10) based on TVL, audits, yield stability & decentralization."""
-    score = 0
-    if audits: score += 3
-    if tvl > 500_000_000: score += 3  # More TVL = safer
-    if yield_stability: score += 2
-    if decentralization: score += 2
-    return min(10, score)  # Max score = 10 (lowest risk)
-
 @app.route("/risk-analysis", methods=["GET"])
 def get_risk_scores():
     """Return risk scores for different DeFi platforms."""
     risk_data = [
-        {"platform": "Aave", "risk_score": calculate_risk("Aave", 600_000_000, True, True, True)},
-        {"platform": "Compound", "risk_score": calculate_risk("Compound", 450_000_000, True, True, False)},
-        {"platform": "Curve", "risk_score": calculate_risk("Curve", 700_000_000, True, False, True)}
+        {"platform": "Aave", "risk_score": 10},
+        {"platform": "Compound", "risk_score": 5},
+        {"platform": "Curve", "risk_score": 8}
     ]
     return jsonify(risk_data)
 
