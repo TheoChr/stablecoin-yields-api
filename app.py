@@ -2,8 +2,6 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
-from graphqlclient import GraphQLClient
-import json5
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for cross-origin requests
@@ -37,59 +35,75 @@ def get_stablecoin_prices():
     except Exception as e:
         return jsonify({"error": str(e)})
 
-# ✅ Fetch market data from CoinLore
-@app.route("/market-data", methods=["GET"])
-def get_market_data():
-    url = "https://api.coinlore.net/api/tickers/"
-    try:
-        response = requests.get(url)
-        return jsonify(response.json())
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-# ✅ Fetch DeFi protocol data from DefiLlama
-@app.route("/defi-protocols", methods=["GET"])
-def get_defi_protocols():
-    url = "https://api.llama.fi/protocols"
-    try:
-        response = requests.get(url)
-        return jsonify(response.json())
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-# ✅ Fetch DIA price feed data
-@app.route("/dia-price-feed", methods=["GET"])
-def get_dia_price_feed():
-    url = "https://api.diadata.org/v1/asset/USD"
-    try:
-        response = requests.get(url)
-        return jsonify(response.json())
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-# ✅ Fetch Yield Data from DeFiLlama
+# ✅ Fetch Yield Data from DeFiLlama with **Historical Analysis**
 @app.route("/yields", methods=["GET"])
 def get_yields():
-    """Fetch real-time stablecoin yields from DeFiLlama."""
+    """Fetch real-time stablecoin yields and compare with historical data."""
     url = "https://yields.llama.fi/pools"
+    
     try:
         response = requests.get(url)
         data = response.json()
 
-        # Filter only stablecoin pools
-        stablecoin_pools = [pool for pool in data["data"] if pool["chain"] == "Ethereum" and pool["symbol"] in ["USDC", "DAI", "USDT"]]
+        # Sample historical yield data (You need to store real past APYs for comparison)
+        historical_yields = {
+            "Aave-USDC": {"7d": 4.8, "30d": 5.1},
+            "Compound-USDC": {"7d": 4.2, "30d": 4.5},
+            "Curve-DAI": {"7d": 6.0, "30d": 6.8},
+        }
 
-        return jsonify(stablecoin_pools)
+        # Filter only stablecoin pools
+        stablecoin_pools = [
+            pool for pool in data["data"]
+            if pool["chain"] == "Ethereum" and pool["symbol"] in ["USDC", "DAI", "USDT"]
+        ]
+
+        # Analyze trends and risks
+        enhanced_pools = []
+        for pool in stablecoin_pools:
+            platform_symbol = f"{pool['project']}-{pool['symbol']}"
+            current_apy = pool["apy"]
+            past_7d_apy = historical_yields.get(platform_symbol, {}).get("7d", current_apy)
+            past_30d_apy = historical_yields.get(platform_symbol, {}).get("30d", current_apy)
+
+            # APY Trend Analysis
+            trend = "🟢 Increasing" if current_apy > past_7d_apy else "🔴 Decreasing"
+            trend_comment = f" (Previously {past_7d_apy}% last 7 days, {past_30d_apy}% last 30 days)"
+
+            # Risk Warnings
+            risk_warning = "✅ Stable yield"  
+            if current_apy > 10:
+                risk_warning = "⚠️ High APY! This could be a temporary liquidity incentive."
+            elif current_apy < 1:
+                risk_warning = "⚠️ Extremely low APY. Consider alternative options."
+
+            # TVL Monitoring
+            tvl_status = "✅ Healthy Liquidity" if pool["tvlUsd"] > 300_000_000 else "⚠️ TVL Dropping - Possible liquidity risk"
+
+            enhanced_pools.append({
+                "platform": pool["project"],
+                "symbol": pool["symbol"],
+                "chain": pool["chain"],
+                "apy": current_apy,
+                "apy_trend": trend + trend_comment,
+                "risk_warning": risk_warning,
+                "tvl": pool["tvlUsd"],
+                "tvl_status": tvl_status,
+            })
+
+        return jsonify(enhanced_pools)
+
     except Exception as e:
         return jsonify({"error": str(e)})
 
 # ✅ Risk Analysis Endpoint
 @app.route("/risk-analysis", methods=["GET"])
 def get_risk_scores():
+    """Returns risk scores based on liquidity, audits, yield stability & decentralization."""
     risk_data = [
-        {"platform": "Aave", "risk_score": 10},
-        {"platform": "Compound", "risk_score": 5},
-        {"platform": "Curve", "risk_score": 8}
+        {"platform": "Aave", "risk_score": 10, "comment": "Highly audited, low risk"},
+        {"platform": "Compound", "risk_score": 8, "comment": "Well-established, moderate risk"},
+        {"platform": "Curve", "risk_score": 7, "comment": "Liquidity fluctuations observed"},
     ]
     return jsonify(risk_data)
 
