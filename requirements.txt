@@ -4,4 +4,3 @@ requests
 gunicorn
 graphqlclient
 json5
-firebase-admin
