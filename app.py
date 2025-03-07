@@ -202,9 +202,13 @@ def get_yields():
         min_tvl = 0
     
     @cached(yield_cache)
-    def cached_yields(platform_key, chain_key, stablecoin_key, limit_key, min_apy_key, min_tvl_key):
-        url = DEFILLAMA_YIELDS_URL
-        data = fetch_data(url)
+if not isinstance(data, list):  # Ensure it's a list before looping
+    return {"error": "Invalid data format from DeFiLlama API", "raw_data": data}
+
+for pool in data:
+    if not isinstance(pool, dict):  # Ensure each pool is a dictionary
+        app.logger.error(f"Unexpected pool format: {pool}")
+        continue  # Skip this entry if it's not a valid dict
         
         if not data:
             return {"error": "Failed to fetch yield data from DeFi Llama"}
