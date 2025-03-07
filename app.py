@@ -6,7 +6,7 @@ import os
 app = Flask(__name__)
 CORS(app)  # Enable CORS for cross-origin requests
 
-# ✅ Homepage route to prevent 404 errors
+# ✅ Homepage route
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
@@ -35,50 +35,53 @@ def get_stablecoin_prices():
     except Exception as e:
         return jsonify({"error": str(e)})
 
-# ✅ Fetch Yield Data from DeFiLlama with **Historical Analysis**
+# ✅ Fetch Yield Data & Historical Trends from DeFiLlama
 @app.route("/yields", methods=["GET"])
 def get_yields():
-    """Fetch real-time stablecoin yields and compare with historical data."""
-    url = "https://yields.llama.fi/pools"
+    """Fetch real-time stablecoin yields and compare with real historical data."""
+    
+    # 🔹 Fetch current APY data
+    current_url = "https://yields.llama.fi/pools"
+    history_url = "https://yields.llama.fi/chart/apy"
     
     try:
-        response = requests.get(url)
-        data = response.json()
+        current_response = requests.get(current_url)
+        current_data = current_response.json()
 
-        # Sample historical yield data (You need to store real past APYs for comparison)
-        historical_yields = {
-            "Aave-USDC": {"7d": 4.8, "30d": 5.1},
-            "Compound-USDC": {"7d": 4.2, "30d": 4.5},
-            "Curve-DAI": {"7d": 6.0, "30d": 6.8},
-        }
-
-        # Filter only stablecoin pools
         stablecoin_pools = [
-            pool for pool in data["data"]
+            pool for pool in current_data["data"]
             if pool["chain"] == "Ethereum" and pool["symbol"] in ["USDC", "DAI", "USDT"]
         ]
 
-        # Analyze trends and risks
+        # 🔹 Fetch historical APY trends
+        history_response = requests.get(history_url)
+        historical_data = history_response.json()
+        
+        # 🔹 Analyze trends and risks
         enhanced_pools = []
         for pool in stablecoin_pools:
             platform_symbol = f"{pool['project']}-{pool['symbol']}"
             current_apy = pool["apy"]
-            past_7d_apy = historical_yields.get(platform_symbol, {}).get("7d", current_apy)
-            past_30d_apy = historical_yields.get(platform_symbol, {}).get("30d", current_apy)
+            tvl = pool["tvlUsd"]
 
-            # APY Trend Analysis
+            # 🔹 Fetch real historical APY
+            history = historical_data.get(platform_symbol, [])
+            past_7d_apy = history[-7]["apy"] if len(history) >= 7 else current_apy
+            past_30d_apy = history[-30]["apy"] if len(history) >= 30 else current_apy
+
+            # 🔹 APY Trend Analysis
             trend = "🟢 Increasing" if current_apy > past_7d_apy else "🔴 Decreasing"
-            trend_comment = f" (Previously {past_7d_apy}% last 7 days, {past_30d_apy}% last 30 days)"
+            trend_comment = f" (7d ago: {past_7d_apy}%, 30d ago: {past_30d_apy}%)"
 
-            # Risk Warnings
-            risk_warning = "✅ Stable yield"  
+            # 🔹 Risk Warnings
+            risk_warning = "✅ Stable yield"
             if current_apy > 10:
                 risk_warning = "⚠️ High APY! This could be a temporary liquidity incentive."
             elif current_apy < 1:
                 risk_warning = "⚠️ Extremely low APY. Consider alternative options."
 
-            # TVL Monitoring
-            tvl_status = "✅ Healthy Liquidity" if pool["tvlUsd"] > 300_000_000 else "⚠️ TVL Dropping - Possible liquidity risk"
+            # 🔹 TVL Monitoring
+            tvl_status = "✅ Healthy Liquidity" if tvl > 300_000_000 else "⚠️ TVL Dropping - Possible liquidity risk"
 
             enhanced_pools.append({
                 "platform": pool["project"],
@@ -87,7 +90,7 @@ def get_yields():
                 "apy": current_apy,
                 "apy_trend": trend + trend_comment,
                 "risk_warning": risk_warning,
-                "tvl": pool["tvlUsd"],
+                "tvl": tvl,
                 "tvl_status": tvl_status,
             })
 
