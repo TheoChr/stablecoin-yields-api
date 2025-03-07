@@ -2,16 +2,24 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
+import firebase_admin
+from firebase_admin import credentials, firestore
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for cross-origin requests
 
-# ✅ Homepage route to prevent 404 errors
+# ✅ Initialize Firebase
+cred = credentials.Certificate("firebase-credentials.json")
+firebase_admin.initialize_app(cred)
+db = firestore.client()
+
+# ✅ Homepage route
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
         "message": "Stablecoin Yields API is running!",
-        "endpoints": ["/yields", "/stablecoin-prices", "/tvl", "/risk-analysis"]
+        "endpoints": ["/yields", "/stablecoin-prices", "/tvl", "/risk-analysis", "/yield-trends"]
     })
 
 # ✅ Fetch TVL Data from DeFiLlama
@@ -24,7 +32,7 @@ def get_tvl():
     except Exception as e:
         return jsonify({"error": str(e)})
 
-# ✅ Fetch live stablecoin prices from CoinGecko
+# ✅ Fetch stablecoin prices from CoinGecko
 @app.route("/stablecoin-prices", methods=["GET"])
 def get_stablecoin_prices():
     url = "https://api.coingecko.com/api/v3/simple/price"
@@ -35,66 +43,93 @@ def get_stablecoin_prices():
     except Exception as e:
         return jsonify({"error": str(e)})
 
-# ✅ Fetch Yield Data from DeFiLlama with **Historical Analysis**
+# ✅ Fetch Yield Data from DeFiLlama & Store in Firebase
 @app.route("/yields", methods=["GET"])
 def get_yields():
-    """Fetch real-time stablecoin yields and compare with historical data."""
+    """Fetch real-time stablecoin yields and store in Firestore for historical trend analysis."""
     url = "https://yields.llama.fi/pools"
     
     try:
         response = requests.get(url)
         data = response.json()
 
-        # Sample historical yield data (You need to store real past APYs for comparison)
-        historical_yields = {
-            "Aave-USDC": {"7d": 4.8, "30d": 5.1},
-            "Compound-USDC": {"7d": 4.2, "30d": 4.5},
-            "Curve-DAI": {"7d": 6.0, "30d": 6.8},
-        }
-
-        # Filter only stablecoin pools
         stablecoin_pools = [
             pool for pool in data["data"]
             if pool["chain"] == "Ethereum" and pool["symbol"] in ["USDC", "DAI", "USDT"]
         ]
 
-        # Analyze trends and risks
         enhanced_pools = []
         for pool in stablecoin_pools:
-            platform_symbol = f"{pool['project']}-{pool['symbol']}"
+            platform = pool["project"]
+            symbol = pool["symbol"]
             current_apy = pool["apy"]
-            past_7d_apy = historical_yields.get(platform_symbol, {}).get("7d", current_apy)
-            past_30d_apy = historical_yields.get(platform_symbol, {}).get("30d", current_apy)
+            tvl = pool["tvlUsd"]
+            timestamp = datetime.utcnow().isoformat()
 
-            # APY Trend Analysis
-            trend = "🟢 Increasing" if current_apy > past_7d_apy else "🔴 Decreasing"
-            trend_comment = f" (Previously {past_7d_apy}% last 7 days, {past_30d_apy}% last 30 days)"
-
-            # Risk Warnings
-            risk_warning = "✅ Stable yield"  
-            if current_apy > 10:
-                risk_warning = "⚠️ High APY! This could be a temporary liquidity incentive."
-            elif current_apy < 1:
-                risk_warning = "⚠️ Extremely low APY. Consider alternative options."
-
-            # TVL Monitoring
-            tvl_status = "✅ Healthy Liquidity" if pool["tvlUsd"] > 300_000_000 else "⚠️ TVL Dropping - Possible liquidity risk"
+            # ✅ Save to Firestore (Only latest APY for each platform-symbol pair)
+            doc_ref = db.collection("stablecoin_yields").document(f"{platform}-{symbol}")
+            doc_ref.set({
+                "platform": platform,
+                "symbol": symbol,
+                "apy": current_apy,
+                "tvl": tvl,
+                "timestamp": timestamp
+            })
 
             enhanced_pools.append({
-                "platform": pool["project"],
-                "symbol": pool["symbol"],
-                "chain": pool["chain"],
+                "platform": platform,
+                "symbol": symbol,
                 "apy": current_apy,
-                "apy_trend": trend + trend_comment,
-                "risk_warning": risk_warning,
-                "tvl": pool["tvlUsd"],
-                "tvl_status": tvl_status,
+                "tvl": tvl,
+                "tvl_status": "✅ Healthy Liquidity" if tvl > 300_000_000 else "⚠️ TVL Dropping - Possible liquidity risk"
             })
 
         return jsonify(enhanced_pools)
 
     except Exception as e:
         return jsonify({"error": str(e)})
+
+# ✅ Yield Trend Analysis Endpoint
+@app.route("/yield-trends", methods=["GET"])
+def get_yield_trends():
+    """Analyze yield trends by comparing current and past APY data."""
+    trends = []
+    stablecoin_yields_ref = db.collection("stablecoin_yields")
+    docs = stablecoin_yields_ref.stream()
+
+    for doc in docs:
+        data = doc.to_dict()
+        platform = data["platform"]
+        symbol = data["symbol"]
+        current_apy = data["apy"]
+        tvl = data["tvl"]
+
+        # Fetch past APY from Firestore history
+        past_doc = db.collection("yield_history").document(f"{platform}-{symbol}").get()
+        if past_doc.exists:
+            past_data = past_doc.to_dict()
+            past_apy = past_data.get("apy", current_apy)
+        else:
+            past_apy = current_apy
+
+        # Determine Trend
+        trend = "🟢 Increasing" if current_apy > past_apy else "🔴 Decreasing"
+        trend_comment = f"(Previously {past_apy}%, Now {current_apy}%)"
+
+        trends.append({
+            "platform": platform,
+            "symbol": symbol,
+            "apy_trend": trend + " " + trend_comment,
+            "tvl_status": "✅ Healthy Liquidity" if tvl > 300_000_000 else "⚠️ TVL Dropping - Possible liquidity risk"
+        })
+
+        # ✅ Update Firestore history
+        db.collection("yield_history").document(f"{platform}-{symbol}").set({
+            "apy": current_apy,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+
+    return jsonify(trends)
 
 # ✅ Risk Analysis Endpoint
 @app.route("/risk-analysis", methods=["GET"])
