@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
+import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 from datetime import datetime
@@ -9,9 +10,15 @@ from datetime import datetime
 app = Flask(__name__)
 CORS(app)  # Enable CORS for cross-origin requests
 
-# ✅ Initialize Firebase
-cred = credentials.Certificate("firebase-credentials.json")
-firebase_admin.initialize_app(cred)
+# ✅ Load Firebase credentials from Render environment variable
+firebase_credentials_json = os.getenv("FIREBASE_CREDENTIALS")
+if firebase_credentials_json:
+    cred_dict = json.loads(firebase_credentials_json)
+    cred = credentials.Certificate(cred_dict)
+    firebase_admin.initialize_app(cred)
+else:
+    raise ValueError("Missing FIREBASE_CREDENTIALS environment variable!")
+
 db = firestore.client()
 
 # ✅ Homepage route
