@@ -2,5 +2,4 @@ flask
 flask-cors
 requests
 gunicorn
-graphqlclient
-json5
+cachetools
