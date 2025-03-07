@@ -3,4 +3,3 @@ flask-cors
 requests
 gunicorn
 cachetools
-json5
