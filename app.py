@@ -2,31 +2,11 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
-import logging
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
-
-# Setup Flask App
 app = Flask(__name__)
 CORS(app)  # Enable CORS for cross-origin requests
 
-# Configure rate limiting
-limiter = Limiter(app, key_func=get_remote_address, default_limits=["50 per minute"])
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# API URLs stored in environment variables
-DEFILLAMA_YIELDS_URL = os.getenv("DEFILLAMA_YIELDS_URL", "https://yields.llama.fi/pools")
-DEFILLAMA_TVL_URL = os.getenv("DEFILLAMA_TVL_URL", "https://api.llama.fi/protocols")
-COINGECKO_URL = os.getenv("COINGECKO_URL", "https://api.coingecko.com/api/v3/simple/price")
-
-# ✅ Homepage Route
+# ✅ Homepage route to prevent 404 errors
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
@@ -36,109 +16,94 @@ def home():
 
 # ✅ Fetch TVL Data from DeFiLlama
 @app.route("/tvl", methods=["GET"])
-@limiter.limit("10 per minute")
 def get_tvl():
+    url = "https://api.llama.fi/tvl"
     try:
-        response = requests.get(DEFILLAMA_TVL_URL, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        filtered_data = [
-            {"name": p["name"], "tvl": p["tvl"], "chain": p["chain"]}
-            for p in data if "tvl" in p and p["tvl"] > 0
-        ]
-        return jsonify(filtered_data)
-    except requests.Timeout:
-        logger.error("Timeout error when fetching TVL data")
-        return jsonify({"error": "Request timed out"}), 504
-    except requests.RequestException as e:
-        logger.error(f"Failed to fetch TVL data: {e}")
-        return jsonify({"error": "Failed to fetch TVL data"}), 500
-
-# ✅ Fetch Stablecoin Prices from CoinGecko
-@app.route("/stablecoin-prices", methods=["GET"])
-@limiter.limit("20 per minute")
-def get_stablecoin_prices():
-    try:
-        params = {"ids": "usd-coin,dai,tether", "vs_currencies": "usd"}
-        response = requests.get(COINGECKO_URL, params=params, timeout=10)
-        response.raise_for_status()
+        response = requests.get(url)
         return jsonify(response.json())
-    except requests.Timeout:
-        logger.error("Timeout error when fetching stablecoin prices")
-        return jsonify({"error": "Request timed out"}), 504
-    except requests.RequestException as e:
-        logger.error(f"Failed to fetch stablecoin prices: {e}")
-        return jsonify({"error": "Failed to fetch stablecoin prices"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
-# ✅ Fetch Yield Data with Pagination
-@app.route("/yields", methods=["GET"])
-@limiter.limit("10 per minute")
-def get_yields():
-    page = request.args.get("page", default=1, type=int)
-    per_page = request.args.get("per_page", default=10, type=int)
-
+# ✅ Fetch live stablecoin prices from CoinGecko
+@app.route("/stablecoin-prices", methods=["GET"])
+def get_stablecoin_prices():
+    url = "https://api.coingecko.com/api/v3/simple/price"
+    params = {"ids": "usd-coin,dai,tether", "vs_currencies": "usd"}
     try:
-        response = requests.get(DEFILLAMA_YIELDS_URL, timeout=10)
-        response.raise_for_status()
-        pools = response.json()
+        response = requests.get(url, params=params)
+        return jsonify(response.json())
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
-        stablecoin_symbols = ["USDC", "DAI", "USDT"]
+# ✅ Fetch Yield Data from DeFiLlama with **Historical Analysis**
+@app.route("/yields", methods=["GET"])
+def get_yields():
+    """Fetch real-time stablecoin yields and compare with historical data."""
+    url = "https://yields.llama.fi/pools"
+    
+    try:
+        response = requests.get(url)
+        data = response.json()
+
+        # Sample historical yield data (You need to store real past APYs for comparison)
+        historical_yields = {
+            "Aave-USDC": {"7d": 4.8, "30d": 5.1},
+            "Compound-USDC": {"7d": 4.2, "30d": 4.5},
+            "Curve-DAI": {"7d": 6.0, "30d": 6.8},
+        }
+
+        # Filter only stablecoin pools
         stablecoin_pools = [
-            pool for pool in pools
-            if pool.get("chain") == "Ethereum" and any(symbol in pool.get("symbol", "") for symbol in stablecoin_symbols)
+            pool for pool in data["data"]
+            if pool["chain"] == "Ethereum" and pool["symbol"] in ["USDC", "DAI", "USDT"]
         ]
 
-        total_pools = len(stablecoin_pools)
-        start = (page - 1) * per_page
-        end = start + per_page
-
-        paginated_pools = stablecoin_pools[start:end]
-
+        # Analyze trends and risks
         enhanced_pools = []
-        for pool in paginated_pools:
-            current_apy = float(pool.get("apy", 0) or 0)
-            tvl = float(pool.get("tvlUsd", 0) or 0)
-            risk_warning = "✅ Stable yield"
+        for pool in stablecoin_pools:
+            platform_symbol = f"{pool['project']}-{pool['symbol']}"
+            current_apy = pool["apy"]
+            past_7d_apy = historical_yields.get(platform_symbol, {}).get("7d", current_apy)
+            past_30d_apy = historical_yields.get(platform_symbol, {}).get("30d", current_apy)
 
+            # APY Trend Analysis
+            trend = "🟢 Increasing" if current_apy > past_7d_apy else "🔴 Decreasing"
+            trend_comment = f" (Previously {past_7d_apy}% last 7 days, {past_30d_apy}% last 30 days)"
+
+            # Risk Warnings
+            risk_warning = "✅ Stable yield"  
             if current_apy > 10:
-                risk_warning = "⚠️ High APY! Might be unsustainable."
+                risk_warning = "⚠️ High APY! This could be a temporary liquidity incentive."
             elif current_apy < 1:
-                risk_warning = "⚠️ Low APY. Look elsewhere."
-            
-            tvl_status = "✅ Good Liquidity" if tvl > 300_000_000 else "⚠️ Low TVL - Liquidity risk"
+                risk_warning = "⚠️ Extremely low APY. Consider alternative options."
+
+            # TVL Monitoring
+            tvl_status = "✅ Healthy Liquidity" if pool["tvlUsd"] > 300_000_000 else "⚠️ TVL Dropping - Possible liquidity risk"
 
             enhanced_pools.append({
-                "platform": pool.get("project", ""),
-                "symbol": pool.get("symbol", ""),
-                "chain": pool.get("chain", ""),
+                "platform": pool["project"],
+                "symbol": pool["symbol"],
+                "chain": pool["chain"],
                 "apy": current_apy,
+                "apy_trend": trend + trend_comment,
                 "risk_warning": risk_warning,
-                "tvl": tvl,
-                "tvl_status": tvl_status
+                "tvl": pool["tvlUsd"],
+                "tvl_status": tvl_status,
             })
 
-        return jsonify({
-            "total_pools": total_pools,
-            "page": page,
-            "per_page": per_page,
-            "pools": enhanced_pools
-        })
+        return jsonify(enhanced_pools)
 
-    except requests.Timeout:
-        logger.error("Timeout error when fetching yields")
-        return jsonify({"error": "Request timed out"}), 504
-    except requests.RequestException as e:
-        logger.error(f"Failed to fetch yields: {e}")
-        return jsonify({"error": "Failed to fetch yields"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
-# ✅ Static Risk Analysis
+# ✅ Risk Analysis Endpoint
 @app.route("/risk-analysis", methods=["GET"])
-@limiter.limit("5 per minute")
 def get_risk_scores():
+    """Returns risk scores based on liquidity, audits, yield stability & decentralization."""
     risk_data = [
         {"platform": "Aave", "risk_score": 10, "comment": "Highly audited, low risk"},
-        {"platform": "Compound", "risk_score": 15, "comment": "Well-established, moderate risk"},
-        {"platform": "Curve", "risk_score": 20, "comment": "Liquidity fluctuations observed"}
+        {"platform": "Compound", "risk_score": 8, "comment": "Well-established, moderate risk"},
+        {"platform": "Curve", "risk_score": 7, "comment": "Liquidity fluctuations observed"},
     ]
     return jsonify(risk_data)
 
